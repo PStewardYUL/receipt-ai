@@ -1,0 +1,11 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+sqlalchemy==2.0.30
+pydantic==2.7.1
+httpx==0.27.0
+apscheduler==3.10.4
+python-multipart==0.0.9
+reportlab==4.2.0
+Pillow==10.3.0
+pdfminer.six==20231228
+aiofiles==23.2.1
