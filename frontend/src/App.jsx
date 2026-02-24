@@ -498,7 +498,7 @@ function ReviewQueue({ toast }) {
       ) : items.map((item) => {
         const isMissingVendor = !item.vendor;
         const isMissingDate   = !item.date;
-        const isMissingTotal  = !item.total;
+        const isMissingTotal  = !item.total || item.total <= 0;
         const reasons = (item.reason || "").split("|").filter(Boolean);
         return (
           <div key={item.flag_id} style={{ background: "#fff", border: `1px solid ${isMissingVendor ? "#fca5a5" : "#e5e7eb"}`, borderRadius: 10, padding: 16, marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}>
@@ -598,7 +598,7 @@ function Categories({ toast }) {
           {editing[c.id] !== undefined ? (
             <>
               <input value={editing[c.id]} onChange={(e) => setEditing({ ...editing, [c.id]: e.target.value })}
-                onKeyDown={(e) => { if (e.key === "Enter") rename(c.id); if (e.key === "Escape") setEditing((x) => { const n={...x}; delete n[c.id]; return n; }); }}
+                onKeyDown={(e) => { if (e.key === "Enter") rename(c.id); if (e.key === "Escape") setEditing((x) => { const n={...x}; delete n[x.id]; return n; }); }}
                 style={{ border: "1px solid #4f46e5", borderRadius: 5, padding: "5px 10px", fontSize: 14, flex: 1, maxWidth: 280 }} autoFocus />
               <button onClick={() => rename(c.id)} style={{ background: "#10b981", color: "#fff", border: "none", borderRadius: 6, padding: "5px 12px", cursor: "pointer" }}>Save</button>
             </>
@@ -752,9 +752,10 @@ function Processing({ toast }) {
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 18 }}>
           <div style={{ fontWeight: 600, marginBottom: 10 }}>Services</div>
           <div style={{ fontSize: 14 }}>{dot(health?.paperless)} Paperless-ngx {!health?.paperless && <span style={{ color: "#ef4444", fontSize: 11 }}> — check URL/token</span>}</div>
-          <div style={{ fontSize: 14, marginTop: 6 }}>{dot(health?.ollama)} Ollama</div>
+          <div style={{ fontSize: 14, marginTop: 6 }}>{dot(health?.paddleocr)} PaddleOCR (Primary)</div>
+          <div style={{ fontSize: 14, marginTop: 6 }}>{dot(health?.ollama)} Ollama (Fallback)</div>
           {health?.ollama_models?.length > 0 && (
-            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>Models: {health.ollama_models.join(", ")}</div>
+            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>LLM Models: {health.ollama_models.join(", ")}</div>
           )}
         </div>
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 18 }}>
@@ -820,13 +821,18 @@ function Settings({ toast }) {
       <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 20 }}>Settings</h2>
       {s && (
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 24, maxWidth: 480 }}>
-          {[["Vision Model (OCR)", "vision_model"], ["Text Model (parsing)", "text_model"]].map(([label, key]) => (
-            <div key={key} style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 5 }}>{label}</label>
-              <input value={s[key] || ""} onChange={(e) => setS({ ...s, [key]: e.target.value })}
-                style={{ border: "1px solid #e5e7eb", borderRadius: 7, padding: "8px 12px", fontSize: 14, width: "100%" }} />
-            </div>
-          ))}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 5 }}>Vision Model (Fallback OCR)</label>
+            <input value={s.vision_model || ""} onChange={(e) => setS({ ...s, vision_model: e.target.value })}
+              style={{ border: "1px solid #e5e7eb", borderRadius: 7, padding: "8px 12px", fontSize: 14, width: "100%" }} />
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>Ollama vision model for fallback (e.g., llava). Primary OCR uses PaddleOCR.</div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: "#374151", display: "block", marginBottom: 5 }}>Text Model (LLM Parsing)</label>
+            <input value={s.text_model || ""} onChange={(e) => setS({ ...s, text_model: e.target.value })}
+              style={{ border: "1px solid #e5e7eb", borderRadius: 7, padding: "8px 12px", fontSize: 14, width: "100%" }} />
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>Ollama model for receipt text parsing (e.g., mistral, llama3)</div>
+          </div>
           <div style={{ marginTop: 8 }}>
             {bool("force_reocr")}
             {bool("use_paperless_ocr_first")}

@@ -1,9 +1,11 @@
 """
 Document processing pipeline.
-Fixes: vendor hints in parse, QST field, currency, tag retry, rescan of untagged docs.
+Uses PaddleOCR as primary OCR with CLIP for logo detection.
+Falls back to Ollama LLM only when needed.
 """
 import hashlib
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -13,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from models.database import Document, Receipt, ProcessingConfig, SessionLocal
 from services.paperless import PaperlessClient
-from services.ollama import OllamaClient
+from services.paddle_ocr import PaddleOCRClient
 from services.vendor import normalize_vendor, assign_category
 from services.review import auto_flag_receipt
 
@@ -60,18 +62,48 @@ def _get_vendor_hints(db: Session) -> list[str]:
     return [r[0] for r in rows if r[0]]
 
 
+def _looks_like_bank_statement(text: str) -> bool:
+    """
+    Check if the extracted text looks like a bank/credit card statement.
+    Only skip if we're very confident it's NOT a receipt.
+    """
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    # Strong indicators of bank statements (multiple of these = skip)
+    bank_keywords = [
+        "account summary", "account balance", "previous balance",
+        "new balance", "credit limit", "available credit",
+        "payment due date", "minimum payment", "annual fee",
+        "transaction date", "posting date", "merchant name",
+        "opening balance", "closing balance", "interest charged",
+        "finance charge", "periodic rate", "annual percentage",
+    ]
+    
+    # Count matching keywords
+    matches = sum(1 for kw in bank_keywords if kw in text_lower)
+    
+    # If we have multiple bank keywords AND the text is very long, it's likely a statement
+    if matches >= 3 and len(text) > 200_000:
+        return True
+    
+    return False
+
+
 class DocumentProcessor:
     def __init__(self):
         self.paperless = PaperlessClient()
-        self.ollama    = OllamaClient()
+        self.paddle_ocr = PaddleOCRClient()
 
     def process_document(self, paperless_doc, force_reocr=False,
-                         vision_model=None, text_model=None, db=None) -> dict:
+                         text_model=None, db=None) -> dict:
         own_db = db is None
         if own_db:
             db = SessionLocal()
         try:
-            return self._pipeline(paperless_doc, force_reocr, vision_model, text_model, db)
+            return self._pipeline(paperless_doc, force_reocr, text_model, db)
         except TimeoutError as e:
             logger.error(f"Doc {paperless_doc.get('id')} timed out: {e}")
             return {"status": "error", "error": "timeout"}
@@ -82,14 +114,13 @@ class DocumentProcessor:
             if own_db:
                 db.close()
 
-    def _pipeline(self, paperless_doc, force_reocr, vision_model, text_model, db):
+    def _pipeline(self, paperless_doc, force_reocr, text_model, db):
         pid = paperless_doc["id"]
         cfg = _get_config(db)
 
         use_paperless_first = cfg.get("use_paperless_ocr_first", "true") == "true"
         auto_skip_vision    = cfg.get("auto_skip_vision_if_text_exists", "true") == "true"
         force_reocr         = force_reocr or cfg.get("force_reocr", "false") == "true"
-        vision_model        = vision_model or cfg.get("vision_model") or None
         text_model          = text_model   or cfg.get("text_model")   or None
 
         doc = db.query(Document).filter_by(paperless_id=pid).first()
@@ -112,40 +143,51 @@ class DocumentProcessor:
         paperless_text  = (paperless_doc.get("content") or "").strip()
         content_hash    = _sha256(paperless_text) if paperless_text else None
         content_changed = bool(content_hash and content_hash != doc.content_hash)
-        vision_changed  = bool(vision_model and vision_model != doc.vision_model_used)
         text_changed    = bool(text_model   and text_model   != doc.text_model_used)
         doc.content_hash = content_hash
 
         # ── OCR phase ──────────────────────────────────────────────────────
+        # Primary: PaddleOCR (fast, accurate)
+        # Fallback: Ollama vision (only when PaddleOCR fails)
         has_text  = len(paperless_text) >= 40
         skip_vis  = (has_text and use_paperless_first and not force_reocr
-                     and (auto_skip_vision or not vision_changed))
+                     and (auto_skip_vision or not text_changed))
 
         if skip_vis:
             ocr_text, ocr_method, logo_hint = paperless_text, "paperless", ""
             logger.info(f"Doc {pid}: using Paperless text ({len(ocr_text)} chars)")
         else:
-            needs_ocr = (force_reocr or vision_changed or content_changed
+            needs_ocr = (force_reocr or content_changed
                          or not doc.ocr_text or not has_text)
             if needs_ocr:
                 try:
                     raw_bytes = _run_with_timeout(self.paperless.download_document, args=(pid,))
+                    
+                    # Use PaddleOCR as primary
                     ocr_text, ocr_method, logo_hint = _run_with_timeout(
-                        self.ollama.ocr_document, args=(raw_bytes,),
-                        kwargs={"model": vision_model, "paperless_text": paperless_text or None})
-                    doc.vision_model_used = vision_model
+                        self.paddle_ocr.ocr_document, 
+                        args=(raw_bytes,),
+                        kwargs={"paperless_text": paperless_text or None})
+                    
+                    # Try CLIP logo detection ONLY for images (not PDF text)
+                    # CLIP only works on actual images, not PDF bytes
+                    if ocr_method != "pdf_direct" and (logo_hint == "unknown" or not logo_hint):
+                        try:
+                            logo_hint = _run_with_timeout(
+                                self.paddle_ocr.identify_logo,
+                                args=(raw_bytes,))
+                        except Exception as e:
+                            logger.warning(f"Doc {pid}: CLIP logo detection failed: {e}")
+                    
                     doc.ocr_text = ocr_text
                     doc.ocr_text_hash = _sha256(ocr_text) if ocr_text else None
                     char_count = len(ocr_text or '')
                     logger.info(f"Doc {pid}: OCR [{ocr_method}] — {char_count} chars")
-                    # Large PDF: could be a phone bill, invoice, government notice,
-                    # or a bank statement with many transactions.
-                    # Strategy: truncate to first-page equivalent + bottom summary section,
-                    # then let the LLM decide if it's a receipt. Only hard-skip truly huge
-                    # documents (>200k chars) that are clearly bank statement dumps.
+                    
+                    # Large PDF handling - be less aggressive about skipping
                     if ocr_method == "pdf_direct" and char_count > MAX_RECEIPT_CHARS:
-                        if char_count > 200_000:
-                            # Almost certainly a multi-month bank statement — skip
+                        # Only skip if definitely a bank statement
+                        if _looks_like_bank_statement(ocr_text):
                             logger.warning(
                                 f"Doc {pid}: BANK STATEMENT — {char_count:,} chars. Skipping."
                             )
@@ -157,19 +199,16 @@ class DocumentProcessor:
                             self._tag(pid)
                             return {"status": "done", "is_receipt": False, "reason": "statement_detected"}
                         else:
-                            # Medium-large doc (15k–200k chars): could be a valid multi-page
-                            # bill or invoice. Take first 6k chars (header/first page) +
-                            # last 3k chars (totals/summary usually at end).
-                            logger.info(
-                                f"Doc {pid}: Large PDF ({char_count:,} chars) — "
-                                f"extracting first-page + summary sections for parsing"
-                            )
+                            # Not a bank statement - process as receipt (phone records, etc.)
+                            logger.info(f"Doc {pid}: Large document ({char_count:,} chars) - processing as receipt")
+                            # Truncate to first+last sections for parsing
                             first_section = ocr_text[:6000]
                             last_section  = ocr_text[-3000:] if len(ocr_text) > 6000 else ""
                             sep = "\n\n[... middle section omitted ...]\n\n"
                             ocr_text = first_section + (sep + last_section if last_section else "")
                             doc.ocr_text = ocr_text
                             doc.ocr_text_hash = _sha256(ocr_text)
+                            
                 except Exception as e:
                     logger.error(f"Doc {pid}: OCR error: {e}")
                     if doc.ocr_text:           ocr_text, ocr_method, logo_hint = doc.ocr_text, "cached", ""
@@ -192,6 +231,8 @@ class DocumentProcessor:
             return {"status": "skipped", "reason": "no_text"}
 
         # ── Parse phase ────────────────────────────────────────────────────
+        # Primary: Deterministic parser (fast, reliable)
+        # Fallback: LLM (only when deterministic insufficient)
         ocr_hash    = _sha256(ocr_text)
         needs_parse = (not doc.structured_parse_hash
                        or doc.structured_parse_hash != ocr_hash
@@ -204,10 +245,13 @@ class DocumentProcessor:
             return {"status": "done", "is_receipt": receipt is not None, "cached": True}
 
         vendor_hints = _get_vendor_hints(db)
+        
         try:
+            # Use PaddleOCR's parse method (deterministic + optional LLM fallback)
             parsed = _run_with_timeout(
-                self.ollama.parse_receipt, args=(ocr_text,),
-                kwargs={"model": text_model, "vendor_hints": vendor_hints, "logo_hint": logo_hint})
+                self.paddle_ocr.parse_receipt, 
+                args=(ocr_text,),
+                kwargs={"vendor_hints": vendor_hints, "logo_hint": logo_hint})
         except TimeoutError:
             doc.last_status = "error"; doc.error_message = "parse timeout"
             doc.updated_at = datetime.utcnow(); db.commit()
@@ -306,9 +350,6 @@ class DocumentProcessor:
             })
         except Exception as e:
             logger.debug(f"Doc {pid}: custom fields not set (non-fatal): {e}")
-
-
-import re  # needed for _update_paperless
 
 
 def run_batch(limit=None, force_reocr=False) -> dict:

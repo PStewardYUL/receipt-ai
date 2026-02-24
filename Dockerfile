@@ -25,9 +25,14 @@ WORKDIR /app
 # System deps:
 #   curl        — used by Docker health check
 #   poppler-utils — pdftoppm for PDF→image rasterisation (optional but recommended)
+#   libgl1, libglib2.0-0 — required for PaddleOCR image processing
+#   libgomp1    — required for PaddlePaddle (OpenMP)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         poppler-utils \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps (separate layer for cache efficiency)

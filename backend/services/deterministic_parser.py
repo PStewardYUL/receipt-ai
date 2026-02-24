@@ -205,6 +205,11 @@ KNOWN_VENDORS = {
     "bell": "Bell", "rogers": "Rogers", "telus": "Telus",
     "videotron": "Videotron", "vidéotron": "Videotron",
     "fido": "Fido", "koodo": "Koodo", "fizz": "Fizz",
+    # Shipping / Logistics
+    "ups": "UPS", "united parcel service": "UPS",
+    "fedex": "FedEx", "federal express": "FedEx",
+    "dhl": "DHL", "canada post": "Canada Post", "postes canada": "Canada Post",
+    "purolator": "Purolator",
     # Utility
     "hydro-québec": "Hydro-Quebec", "hydro-quebec": "Hydro-Quebec",
     "hydro québec": "Hydro-Quebec", "enbridge": "Enbridge",
@@ -249,6 +254,12 @@ DOMAIN_VENDORS = {
     "montreal.ca": "Ville de Montreal",
     "revenuquebec.ca": "Revenu Quebec",
     "canada.ca": "Government of Canada",
+    # Shipping carriers
+    "ups.com": "UPS", "ups.ca": "UPS",
+    "fedex.com": "FedEx", "fedex.ca": "FedEx",
+    "dhl.com": "DHL", "dhl.ca": "DHL",
+    "canadapost.ca": "Canada Post", "postescanada.ca": "Canada Post",
+    "purolator.com": "Purolator",
     # E-commerce / Marketplaces
     "ebay.ca": "eBay", "ebay.com": "eBay",
     "paypal.com": "PayPal", "paypal.ca": "PayPal",
@@ -384,6 +395,18 @@ class DeterministicParser:
                 continue
             if re.search(r"(receipt|reçu|facture|invoice|bill|date|tel:|www\.|http)", stripped, re.I):
                 continue
+
+            # Skip common non-vendor strings at top of receipts
+            skip_patterns = [
+                r"^log\s*in\s*$",  # UPS shows "Log In" but we want UPS
+                r"^sign\s*(in)?$",
+                r"^welcome$",
+                r"^please\s*(sign|log)",
+            ]
+            for pat in skip_patterns:
+                if re.match(pat, stripped, re.I):
+                    logger.debug(f"Skipping non-vendor top line: '{stripped}'")
+                    continue
 
             # Looks like a business name
             logger.debug(f"Vendor from first-line heuristic: '{stripped}'")

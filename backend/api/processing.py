@@ -22,15 +22,34 @@ class SingleIn(BaseModel):
 @router.get("/health")
 def health_check():
     from services.paperless import PaperlessClient
+    from services.paddle_ocr import PaddleOCRClient
     from services.ollama import OllamaClient
+    
+    # Check Paperless
     try:
         pl_ok = PaperlessClient().health_check()
     except Exception:
         pl_ok = False
+    
+    # Check PaddleOCR
+    try:
+        paddle_ok = PaddleOCRClient().health_check()
+    except Exception as e:
+        logger.warning(f"PaddleOCR health check failed: {e}")
+        paddle_ok = False
+    
+    # Check Ollama (for LLM fallback)
     ol = OllamaClient()
     ol_ok = ol.health_check()
     models = ol.list_models() if ol_ok else []
-    return {"paperless": pl_ok, "ollama": ol_ok, "ollama_models": models}
+    
+    return {
+        "paperless": pl_ok, 
+        "paddleocr": paddle_ok,
+        "ollama": ol_ok, 
+        "ollama_models": models,
+        "ocr_system": "paddleocr_with_clip_fallback_ollama"
+    }
 
 
 @router.post("/batch")

@@ -9,3 +9,11 @@ reportlab==4.2.0
 Pillow==10.3.0
 pdfminer.six==20231228
 aiofiles==23.2.1
+# Required for PaddleOCR
+setuptools>=65.0
+# PaddleOCR for text extraction
+paddlepaddle==3.0.0b1
+paddleocr==2.8.1
+# CLIP for logo/vendor detection
+transformers==4.40.0
+torch==2.3.0

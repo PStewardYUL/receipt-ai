@@ -7,8 +7,10 @@ from datetime import datetime
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+# Settings keys
 SETTING_KEYS = [
-    "vision_model", "text_model",
+    "vision_model",  # Ollama vision model for fallback OCR
+    "text_model",   # Ollama text model for parsing
     "force_reocr", "use_paperless_ocr_first", "auto_skip_vision_if_text_exists",
 ]
 
