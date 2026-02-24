@@ -257,6 +257,20 @@ def extract_pdf_text(pdf_bytes: bytes) -> Optional[str]:
             logger.warning("PDF text extraction yielded mostly non-printable chars, treating as scan")
             return None
 
+        # CID code check: pdfminer emits (cid:N) when it can't decode embedded fonts.
+        # These look printable but are useless to the LLM. If >15% of the text is
+        # CID codes, treat the PDF as a scan and fall back to image OCR.
+        import re as _re
+        cid_count = len(_re.findall(r'\(cid:\d+\)', text))
+        if cid_count > 5:
+            cid_chars = cid_count * 8  # average CID token is ~8 chars
+            if cid_chars / max(len(text), 1) > 0.15:
+                logger.warning(
+                    f"PDF text has {cid_count} CID codes ({cid_chars/len(text):.0%} of text) "
+                    "— embedded font not decodable, treating as scan"
+                )
+                return None
+
         logger.info(f"PDF direct text extraction: {len(text)} chars")
         return text
 
@@ -269,11 +283,12 @@ def is_pdf(raw_bytes: bytes) -> bool:
     return raw_bytes[:4] == b"%PDF"
 
 
-def pdf_to_image(pdf_bytes: bytes, page: int = 0, dpi: int = 200) -> Optional[bytes]:
+def pdf_to_image(pdf_bytes: bytes, page: int = 0, dpi: int = 200, timeout: int = 60) -> Optional[bytes]:
     """
     Render a PDF page to an image when direct text extraction fails.
-    Uses pdfminer + PIL workaround — for better results install poppler
-    and use pdftoppm via subprocess.
+    Uses pdftoppm via subprocess to rasterize PDF.
+    Lower DPI (150) for large PDFs to avoid memory issues.
+    Higher timeout (60s) for large PDFs.
     Returns JPEG bytes or None.
     """
     try:
@@ -285,7 +300,7 @@ def pdf_to_image(pdf_bytes: bytes, page: int = 0, dpi: int = 200) -> Optional[by
         out_prefix = pdf_path.replace(".pdf", "")
         result = subprocess.run(
             ["pdftoppm", "-jpeg", "-r", str(dpi), "-f", str(page+1), "-l", str(page+1), pdf_path, out_prefix],
-            capture_output=True, timeout=30
+            capture_output=True, timeout=timeout
         )
         os.unlink(pdf_path)
 
@@ -302,8 +317,13 @@ def pdf_to_image(pdf_bytes: bytes, page: int = 0, dpi: int = 200) -> Optional[by
         with open(files[0], "rb") as f:
             img_bytes = f.read()
         os.unlink(files[0])
+        
+        logger.debug(f"PDF rasterized to {len(img_bytes)//1024}KB at {dpi} DPI")
         return img_bytes
 
+    except subprocess.TimeoutExpired:
+        logger.warning(f"pdftoppm timed out after {timeout}s — treating as scan")
+        return None
     except FileNotFoundError:
         logger.debug("pdftoppm not available — PDF will be sent to vision model directly")
         return None

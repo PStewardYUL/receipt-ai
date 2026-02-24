@@ -200,14 +200,16 @@ class DocumentProcessor:
                             return {"status": "done", "is_receipt": False, "reason": "statement_detected"}
                         else:
                             # Not a bank statement - process as receipt (phone records, etc.)
-                            logger.info(f"Doc {pid}: Large document ({char_count:,} chars) - processing as receipt")
-                            # Truncate to first+last sections for parsing
-                            first_section = ocr_text[:6000]
-                            last_section  = ocr_text[-3000:] if len(ocr_text) > 6000 else ""
+                            # For statements: keep first 8000 chars (summary page) + last 2000 chars
+                            # This ensures we capture the total/summary on page 1
+                            logger.info(f"Doc {pid}: Large document ({char_count:,} chars) - truncating for LLM")
+                            first_section = ocr_text[:8000]
+                            last_section  = ocr_text[-2000:] if len(ocr_text) > 8000 else ""
                             sep = "\n\n[... middle section omitted ...]\n\n"
                             ocr_text = first_section + (sep + last_section if last_section else "")
                             doc.ocr_text = ocr_text
                             doc.ocr_text_hash = _sha256(ocr_text)
+                            logger.info(f"Doc {pid}: Truncated to {len(ocr_text)} chars for LLM")
                             
                 except Exception as e:
                     logger.error(f"Doc {pid}: OCR error: {e}")

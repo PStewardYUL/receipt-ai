@@ -24,9 +24,16 @@ services:
       LOG_LEVEL:     ${LOG_LEVEL:-INFO}
       BATCH_HOUR:    ${BATCH_HOUR:-2}
 
+      # Model cache directories - persist across rebuilds via volume mount
+      HF_HOME: /root/.cache/huggingface
+      TRANSFORMERS_CACHE: /root/.cache/huggingface/transformers
+      PADDLEOCR_CACHE_DIR: /root/.cache/paddleocr
+
     volumes:
       - /mnt/cache/appdata/receipt-ai/data:/data
       - /mnt/cache/appdata/receipt-ai/logs:/logs
+      # Model cache volumes - persist across rebuilds
+      - /mnt/cache/appdata/receipt-ai/models:/root/.cache
 
     ports:
       - "3030:8000"       # UI + API both on port 3030

@@ -49,6 +49,13 @@ COPY --from=frontend-build /build/dist/ /app/static/
 # Persistent data dirs (override with volume mounts)
 RUN mkdir -p /data /logs
 
+# Symlink PaddleOCR cache to the persistent model cache volume.
+# PaddleOCR downloads models to ~/.paddleocr/ by default, but only
+# ~/.cache/ is volume-mounted. This symlink ensures models persist
+# across container rebuilds.
+RUN mkdir -p /root/.cache/paddleocr && \
+    ln -sf /root/.cache/paddleocr /root/.paddleocr
+
 # ─────────────────────────────────────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1 \
     DATABASE_PATH=/data/receipts.db \

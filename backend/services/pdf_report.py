@@ -85,9 +85,10 @@ def generate_annual_report(db: Session, year: int) -> bytes:
 
     # ── Summary stats ─────────────────────────────────────────────────────────
     total_gst = sum(r.gst or 0 for r in receipts)
+    total_qst = sum(getattr(r, "qst", 0) or 0 for r in receipts)
     total_pst = sum(r.pst or 0 for r in receipts)
     total_hst = sum(r.hst or 0 for r in receipts)
-    total_tax = total_gst + total_pst + total_hst
+    total_tax = total_gst + total_qst + total_pst + total_hst
     total_pretax = sum(r.pre_tax or 0 for r in receipts)
     total_amount = sum(r.total or 0 for r in receipts)
     vendors = set(r.normalized_vendor for r in receipts if r.normalized_vendor)
@@ -124,6 +125,9 @@ def generate_annual_report(db: Session, year: int) -> bytes:
         ["GST (Goods & Services Tax 5%)",
          f"${total_gst:,.2f}",
          f"{(total_gst/total_tax*100) if total_tax else 0:.1f}%"],
+        ["QST (Quebec Sales Tax 9.975%)",
+         f"${total_qst:,.2f}",
+         f"{(total_qst/total_tax*100) if total_tax else 0:.1f}%"],
         ["PST (Provincial Sales Tax)",
          f"${total_pst:,.2f}",
          f"{(total_pst/total_tax*100) if total_tax else 0:.1f}%"],
@@ -163,7 +167,7 @@ def generate_annual_report(db: Session, year: int) -> bytes:
             cat_totals[name] = {"count": 0, "pre_tax": 0, "tax": 0, "total": 0}
         cat_totals[name]["count"] += 1
         cat_totals[name]["pre_tax"] += r.pre_tax or 0
-        cat_totals[name]["tax"] += (r.gst or 0) + (r.pst or 0) + (r.hst or 0)
+        cat_totals[name]["tax"] += (r.gst or 0) + (getattr(r, "qst", 0) or 0) + (r.pst or 0) + (r.hst or 0)
         cat_totals[name]["total"] += r.total or 0
 
     if cat_totals:
@@ -206,7 +210,7 @@ def generate_annual_report(db: Session, year: int) -> bytes:
     # ── Full Receipt Ledger ───────────────────────────────────────────────────
     story.append(Paragraph("Complete Receipt Ledger", section_style))
 
-    ledger_data = [["Date", "Vendor", "Category", "Pre-Tax", "GST", "PST", "HST", "Total"]]
+    ledger_data = [["Date", "Vendor", "Category", "Pre-Tax", "GST", "QST", "PST", "HST", "Total"]]
     for r in receipts:
         cat_name = r.category.name if r.category else ""
         vendor_str = (r.vendor or "Unknown")[:32]
@@ -216,6 +220,7 @@ def generate_annual_report(db: Session, year: int) -> bytes:
             cat_name[:18],
             f"${(r.pre_tax or 0):,.2f}",
             f"${(r.gst or 0):,.2f}",
+            f"${(getattr(r, 'qst', 0) or 0):,.2f}",
             f"${(r.pst or 0):,.2f}",
             f"${(r.hst or 0):,.2f}",
             f"${(r.total or 0):,.2f}",
@@ -226,12 +231,13 @@ def generate_annual_report(db: Session, year: int) -> bytes:
         "TOTAL", "", "",
         f"${total_pretax:,.2f}",
         f"${total_gst:,.2f}",
+        f"${total_qst:,.2f}",
         f"${total_pst:,.2f}",
         f"${total_hst:,.2f}",
         f"${total_amount:,.2f}",
     ])
 
-    col_w = [0.85*inch, 1.8*inch, 1.1*inch, 0.8*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.8*inch]
+    col_w = [0.75*inch, 1.45*inch, 0.9*inch, 0.7*inch, 0.6*inch, 0.6*inch, 0.6*inch, 0.6*inch, 0.7*inch]
     ledger = Table(ledger_data, colWidths=col_w, repeatRows=1)
     ledger.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), DARK),

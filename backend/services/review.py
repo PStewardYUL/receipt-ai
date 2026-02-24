@@ -3,6 +3,7 @@ Confidence review queue service.
 Auto-flags receipts that need human verification.
 """
 import logging
+import os
 from datetime import datetime
 from sqlalchemy.orm import Session
 from models.database import Receipt, ReviewFlag
@@ -46,6 +47,14 @@ def auto_flag_receipt(db: Session, receipt: Receipt) -> ReviewFlag | None:
     return flag
 
 
+def _paperless_url(paperless_id) -> str | None:
+    """Build absolute Paperless URL from env var + document ID."""
+    base = os.getenv("PAPERLESS_URL", "").rstrip("/")
+    if base and paperless_id:
+        return f"{base}/documents/{paperless_id}"
+    return None
+
+
 def get_review_queue(db: Session, status: str = "pending") -> list[dict]:
     """Return receipts pending review with full details."""
     flags = (
@@ -59,12 +68,14 @@ def get_review_queue(db: Session, status: str = "pending") -> list[dict]:
         r = f.receipt
         if not r:
             continue
+        pid = r.document.paperless_id if r.document else None
         result.append({
             "flag_id": f.id,
             "reason": f.reason,
             "status": f.status,
             "receipt_id": r.id,
-            "paperless_id": r.document.paperless_id if r.document else None,
+            "paperless_id": pid,
+            "paperless_url": _paperless_url(pid),
             "vendor": r.vendor,
             "date": r.date,
             "total": r.total,

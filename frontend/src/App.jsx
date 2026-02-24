@@ -480,8 +480,6 @@ function ReviewQueue({ toast }) {
   const reasonColor = { low_confidence: "#f59e0b", missing_total: "#ef4444", missing_date: "#f59e0b", missing_vendor: "#ef4444", manual: "#8b5cf6" };
   const reasonLabel = { low_confidence: "Low confidence", missing_total: "No total", missing_date: "No date", missing_vendor: "No vendor", manual: "Manual review" };
 
-  const paperlessBase = window.__PAPERLESS_URL__ || "";
-
   return (
     <div>
       <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 20 }}>Review Queue</h2>
@@ -507,8 +505,8 @@ function ReviewQueue({ toast }) {
                 <span style={{ fontWeight: 700, fontSize: 15, color: isMissingVendor ? "#9ca3af" : "#111827", fontStyle: isMissingVendor ? "italic" : "normal" }}>
                   {item.vendor || "⚠ No vendor identified"}
                 </span>
-                {item.paperless_id && (
-                  <a href={`${paperlessBase}/documents/${item.paperless_id}`}
+                {item.paperless_url && (
+                  <a href={item.paperless_url}
                     target="_blank" rel="noreferrer"
                     style={{ fontSize: 12, color: "#4f46e5", textDecoration: "none", background: "#eef2ff", borderRadius: 5, padding: "2px 8px", fontWeight: 600 }}>
                     Open in Paperless ↗
